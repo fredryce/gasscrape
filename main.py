@@ -4,9 +4,18 @@ import pandas as pd
 import numpy as np
 import random
 import time
+import datetime
+
 
 
 import logging
+
+current_time = f"{datetime.datetime.today()}"
+
+default_dir = os.path.join("gas_data", current_time)
+
+os.mkdir(default_dir)
+
 logging.basicConfig(filename='test.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
 states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", 
@@ -63,7 +72,18 @@ search = SearchEngine(simple_zipcode=True)
 #res = search.by_state("Florida", returns=0)
 
 
+def process_time(str_duration):
+	try:
 
+		amount, unit, _ = str_duration.split(" ")
+		int_amount = int(amount)
+		current = None
+		if "day" in unit:
+
+
+
+	except Exception as e:
+		return None, None, None
 
 for state in states:
 
@@ -98,11 +118,13 @@ for state in states:
 					price = gas_station.find_all("span", {"class":price_name})[0].text
 					last_update = gas_station.find_all("span", {"class":last_update_name})[0].text
 					updated_by = gas_station.find_all("span", {"class":updated_by_name})[0].text
+
+					current, exact, duration = process_time(updated_by)
 					
-					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, price, last_update, updated_by])
-					print(f"{id_value} {name} at {location} price:{price}, updated by: {updated_by} {last_update}")
+					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, price, last_update, updated_by, current, exact, duration])
+					print(f"{id_value} {name} at {location} price:{price}, updated by: {updated_by} {last_update} time_update: {duration} seconds")
 				except IndexError:
-					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, None, None, None])
+					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, None, None, None, None, None, None])
 					#print(f"no gas price for {name} at {location}")
 					#logging.warning(f"no gas price for {name} at {location}")
 
@@ -111,9 +133,9 @@ for state in states:
 
 
 
-		time.sleep(1) #please dont arrest me! i tried!!!
+		#time.sleep(1) #please dont arrest me! i tried!!!
 
 
-	pd.DataFrame(df_list, columns=["id_value", "name", "address", "city_state", "state", "zip_code", "price", "last_update_time", "updated_by"]).to_csv(f"{state}_gas.csv", index=False)
+	pd.DataFrame(df_list, columns=["id_value", "name", "address", "city_state", "state", "zip_code", "price", "last_update_time", "updated_by"]).to_csv(os.path.join(default_dir, f"{state}_gas.csv"), index=False)
 
 	

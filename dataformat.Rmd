@@ -50,7 +50,7 @@ multmerge = function(mypath){
 
 ```
 ```{r, warning=F}
-all_gas_data <- multmerge("./gas_data")
+all_gas_data <- multmerge("./gas_data/old")
 all_gas_data
 ```
 
