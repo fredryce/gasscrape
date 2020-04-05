@@ -1,20 +1,16 @@
+from selenium import webdriver
 import requests
 import os, sys, glob
 import pandas as pd
 import numpy as np
 import random
 import time
+
 import datetime
-
-
-
 import logging
 
-current_time = f"{datetime.datetime.today()}"
-
-default_dir = os.path.join("gas_data", current_time)
-
-os.mkdir(default_dir)
+current_date = datetime.datetime.today().strftime("%d_%m_%Y")
+os.mkdir(os.path.join(os.getcwd(), f"{current_date}"))
 
 logging.basicConfig(filename='test.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
@@ -72,18 +68,31 @@ search = SearchEngine(simple_zipcode=True)
 #res = search.by_state("Florida", returns=0)
 
 
-def process_time(str_duration):
-	try:
+def convert_to_sec(time_str):
 
-		amount, unit, _ = str_duration.split(" ")
-		int_amount = int(amount)
-		current = None
-		if "day" in unit:
+	current_time = datetime.datetime.now()
+
+	array = time_str.split()
+	if len(array) != 3:
+		raise IndexError
+
+	time_v, unit_v, _ = array
+
+	if "minute" in unit_v:
+		return current_time - datetime.timedelta(minutes = int(time_v))
+	elif "second" in unit_v:
+		return current_time - datetime.timedelta(seconds = int(time_v))
+	elif "day" in unit_v:
+		return current_time - datetime.timedelta(days = int(time_v))
+	elif "hour" in unit_v:
+		return current_time - datetime.timedelta(hours = int(time_v))
+	else:
+		print(f"time unit not in consider {unit_v}")
+		raise IndexError
 
 
 
-	except Exception as e:
-		return None, None, None
+
 
 for state in states:
 
@@ -92,10 +101,15 @@ for state in states:
 	res = search.by_state(state, returns=0)
 	for i, zip_value in enumerate(res):
 
-		print(f"Processing {zip_value.zipcode} in {state} #{i}/{len(res)} zipcodes")
+		print(f"Processing {zip_value.zipcode} in {state} {i}")
 
+		while True:
 
-		test = requests.get("https://www.gasbuddy.com/home?search=%d&fuel=1" % (int(zip_value.zipcode)), headers=headers)
+			try:
+				test = requests.get("https://www.gasbuddy.com/home?search=%d&fuel=1" % (int(zip_value.zipcode)), headers=headers)
+				break
+			except Exception as e:
+				continue
 
 		soup = BeautifulSoup(test.content, 'html.parser')
 
@@ -117,25 +131,28 @@ for state in states:
 				try:
 					price = gas_station.find_all("span", {"class":price_name})[0].text
 					last_update = gas_station.find_all("span", {"class":last_update_name})[0].text
-					updated_by = gas_station.find_all("span", {"class":updated_by_name})[0].text
 
-					current, exact, duration = process_time(updated_by)
+
+
+					last_update = convert_to_sec(last_update)
+
+					updated_by = gas_station.find_all("span", {"class":updated_by_name})[0].text
 					
-					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, price, last_update, updated_by, current, exact, duration])
-					print(f"{id_value} {name} at {location} price:{price}, updated by: {updated_by} {last_update} time_update: {duration} seconds")
+					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, price, last_update, updated_by])
+					print(f"{id_value} {name} at {location} price:{price}, updated by: {updated_by} {last_update}")
 				except IndexError:
-					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, None, None, None, None, None, None])
+					df_list.append([id_value, name, location[0], location[-1], state, zip_value.zipcode, None, None, None])
 					#print(f"no gas price for {name} at {location}")
 					#logging.warning(f"no gas price for {name} at {location}")
 
 			except Exception as e:
-				logging.warning(f"{gas_station} in {state} ERROR:{e}, skipping....")
+				logging.warning(f"{gas_station} in {state} skipping....")
 
 
 
 		#time.sleep(1) #please dont arrest me! i tried!!!
 
 
-	pd.DataFrame(df_list, columns=["id_value", "name", "address", "city_state", "state", "zip_code", "price", "last_update_time", "updated_by"]).to_csv(os.path.join(default_dir, f"{state}_gas.csv"), index=False)
+	pd.DataFrame(df_list, columns=["id_value", "name", "address", "city_state", "state", "zip_code", "price", "last_update_time", "updated_by"]).to_csv(f"{current_date}/{state}_gas.csv", index=False)
 
 	

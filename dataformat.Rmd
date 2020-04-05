@@ -3,40 +3,11 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-
-
-# United States Gas dataset
-
-## Introduction
-
-
-This project aims to retrieve the most recent gas information from crowd sensed sources. The idea for this project was inspired by Dr. Reinaldo Sanchez-Aria’s dataset on gas prices which was recorded by himself. After doing thorough research, two sources stood out the most. One which is known as mygasfeed.com provides api claims to have easy interaction and returns data in a well-known JSON format. After many hours of attempting and failing to get the API key, this source is deemed to be unusable, their API made it sound like it very well designed, but it's very disappointing to find out how difficult it is to even get started with an API key. The second source retrieves gas information from an online site called gasbuddy.com. Gasbuddy has a large number of customers all around the United States, and they maintain their own mobile applications that extract information from their database. Unfortunately, GasBuddy doesn't offer an API to interact with their database. To overcome this issue we determined to take the route of web scraping. 
-
-
-
-## Web Scraping
-
-
-Web scraping, also known as web crawling, is a fairly simple concept, extracting information from HTML response after sending https requests to a website, however, the execution process can be very tedious leading to frustrations. Prior to scraping a site, it’s always better to understand the legality behind the information you are gathering, making sure the information you are getting is not any personal or sensitive information as well as having enough permission to do so. The next step is to understand the layout of the website, some websites are very scrape friendly and some are not. One example website that is not very scrape friendly is Airbnb, with the implementation of captchas and automation detections in place to prevent scrapers from getting information. it's rather tedious to get around these barricades, and excessive attempts may lead to your IP address being blacklisted. Gasbuddy, on the other hand, is a very scrape friendly site, although some of their pages use javascript rendering, many pages still have information stored in plain HTML, and the URLs is fairly straightforward following a simple template which makes getting information fairly easy. After some exploration, we decide to look up the gas information by zip code, doing so allows us to get detailed gas information that is easily retrieved. The URL for scraping by zip code follows a fairly simple format eg. https://www.gasbuddy.com/home?search=ZIPCODE&fuel=1, all we have to do is replace the _ZIPCODE_ in the string with any zip code we want to get all the gas station information within that zip code. The next step is to find a way to get all the zip code information within the United States, thankfully for a library in python called uszipcode which allows us to look up zip codes per state bases, we simply iterated through every zip code value in the United States and sent a request to the URL we discussed earlier, the HTML returned is parsed through beautifulsoup to search for the gas station’s name, location, last updated price, last updated time, and user updated by. This information is stored in a data frame and saved to a CSV file for each state.
-
-
-## Method Choice
-
-
-For the web scraping task, we decide to use python over R, considering the potential for scaling in the future, with python’s support for various of packages such as multiprocessing, multithreading, asyncio, and c extension support offers the ability to sent and handle requests in parallel, speed up the process by many factors to get faster results. Another reason to choose python over R for this part of the project is due to the nature of web scraping. R is primarily used in the realm of data processing and analysis, and personally I feel that web scraping is more in the realm of computer science, and python offers a lot of flexibility and community support in this aspect.The python code is included in a separate python file due to the fact that there is still a problem trying to figure out how reticulate handle external python packages I also included an executable in the directory for anyone wanting to run the code without having to worry about any of the dependencies. The code will take some time to run and it will generate a csv file for each of the states and store it in the current directory.
-
-
-
 ```{r}
 library(dplyr)
 library(tidyverse)
 
-
 ```
-## Preprocessing
-
-
-The CSV files from each state are merged into a data frame and loaded into R. The columns are all loaded in as character type and the empty values are replaced with NA. The columns are in the right format however some of the columns can still be further cleaned, one example is the price column containing both price in dollars and price in cents. The first column of the data frame is the unique reference id on Gasbuddy for each of the gas station recorded. However, the data was scraped with more than just the id value, the column containing the entire reference link to the gas station on the website. To only extract the id values from the character string, we used a regular expression with *str_extract* function. The city_state column containing the city and state information for the gas station within the same column, the separate function is used to split it into two separate columns for further processing. The data frames now contain two columns with state information, the initial state column is the state requested, and the column generated from the separate function is the location returned from the scraping process. In the perfect scenario, both of these columns would have matching information. The price column containing prices in different units of measurement, after doing some filtering the lowest gas price determines to be 98cents, we simply converted all the amounts that are higher than 50 to dollar value in order to standardize the unit.
 
 ```{r, warning=F}
 multmerge = function(mypath){
@@ -44,17 +15,24 @@ multmerge = function(mypath){
   datalist = (lapply(filenames, function(x){read.csv(file=x, colClasses=c("zip_code"="character"), na.strings=c(""))}))
   res <- Reduce(function(x,y){bind_rows(x, y)}, datalist)
   return(res)
-  
 }
 
 
 ```
 ```{r, warning=F}
-all_gas_data <- multmerge("./gas_data/old")
+all_gas_data <- multmerge("D:/Python/gasbuddyscrap/30_03_2020")
 all_gas_data
 ```
 
+```{r}
 
+all_gas_data %>% 
+  summary()
+
+
+#unique(all_gas_data$last_update_time)
+
+```
 
 ```{r}
 data_with_price <- all_gas_data %>% 
@@ -100,18 +78,10 @@ clean_data_new %>%
   filter(state=="FL", city=="Lakeland")
 ```
 
-## Data Analysis and visualization
-
-This section discusses the analysis techniques for the dataset as well as some visualizations showing some of the data behaviors. A new column is created to convert the state abbreviations to full state names, the dataset is then grouped by state name and fed into ggplot’s *geom_map* function to plot the average gas prices within the state. This visualization uses the template from this GitHub repository *https://github.com/wmurphyrd/fiftystater  * with slight modifications to show average gas price information. The second type of visualization is created using *geom_botplot* function showing more detailed information on the pricing information comparing between the different states. For better visualization purposes, *fct_reorder* is used to sort the states by their mean price values. 
-
 
 ```{r}
 
 #average gas prices from diffrerent states
-
-library(fiftystater)
-
-data("fifty_states")
 
 state_name_data <- clean_data_new %>% 
   mutate(full_state=tolower(setNames(state.name, state.abb)[state])) %>% 
@@ -133,7 +103,7 @@ p <- ggplot(state_name_data, aes(map_id = full_state)) +
 p
 
 ```
-
+https://github.com/wmurphyrd/fiftystater
 
 ```{r}
 
@@ -147,10 +117,5 @@ clean_data_new %>%
 
 
 ```
-
-## Future Work
-
-The dataset can be further cleaned in the future. One example is the last_update_time column, this column contains the duration from when the price was updated last. This information is relative to when the data is scraped, the scraping code should be modified to recording the exact time rather than the relative duration. This process can be very difficult as the units are different and require natural language processing skills. More scraping can be done based on the unique id values for each gas station, information such as gas station rating, different level gas prices as well as user comments can be very useful in different scenarios. User comments and price changes can be used in hurricane scenarios to help people determine what is the best station to go to in order to get gas. 
-
 
 
