@@ -1,0 +1,619 @@
+---
+title: "United States Gas dataset"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: TRUE
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=F, include=F}
+library(dplyr)
+library(tidyverse)
+library(urbnmapr)
+library(gganimate)
+library(ggthemes)
+library(fiftystater)
+library(tibble)
+library(lubridate)
+library(reticulate)
+library(scales)
+
+
+```
+# Midterm Project
+
+
+## Introduction
+
+This project aims to retrieve the most recent gas information from crowd sensed sources. The idea for this project was inspired by Dr. Reinaldo Sanchez-Aria’s dataset on gas prices which was recorded by himself. After doing thorough research, two sources stood out the most. One which is known as mygasfeed.com provides api claims to have easy interaction and returns data in a well-known JSON format. After many hours of attempting and failing to get the API key, this source is deemed to be unusable, their API made it sound like it very well designed, but it's very disappointing to find out how difficult it is to even get started with an API key. The second source retrieves gas information from an online site called gasbuddy.com. Gasbuddy has a large number of customers all around the United States, and they maintain their own mobile applications that extract information from their database. Unfortunately, GasBuddy doesn't offer an API to interact with their database. To overcome this issue we determined to take the route of web scraping. 
+
+
+## Web Scraping
+
+
+Web scraping, also known as web crawling, is a fairly simple concept, extracting information from HTML response after sending https requests to a website, however, the execution process can be very tedious leading to frustrations. Prior to scraping a site, it’s always better to understand the legality behind the information you are gathering, making sure the information you are getting is not any personal or sensitive information as well as having enough permission to do so. The next step is to understand the layout of the website, some websites are very scrape friendly and some are not. One example website that is not very scrape friendly is Airbnb, with the implementation of captchas and automation detections in place to prevent scrapers from getting information. it's rather tedious to get around these barricades, and excessive attempts may lead to your IP address being blacklisted. Gasbuddy, on the other hand, is a very scrape friendly site, although some of their pages use javascript rendering, many pages still have information stored in plain HTML, and the URLs is fairly straightforward following a simple template which makes getting information fairly easy. After some exploration, we decide to look up the gas information by zip code, doing so allows us to get detailed gas information that is easily retrieved. The URL for scraping by zip code follows a fairly simple format eg. https://www.gasbuddy.com/home?search=ZIPCODE&fuel=1, all we have to do is replace the _ZIPCODE_ in the string with any zip code we want to get all the gas station information within that zip code. The next step is to find a way to get all the zip code information within the United States, thankfully for a library in python called uszipcode which allows us to look up zip codes per state bases, we simply iterated through every zip code value in the United States and sent a request to the URL we discussed earlier, the HTML returned is parsed through beautifulsoup to search for the gas station’s name, location, last updated price, last updated time, and user updated by. This information is stored in a data frame and saved to a CSV file for each state.
+
+
+## Methods
+
+For the web scraping task, we decide to use python over R, considering the potential for scaling in the future, with python’s support for various of packages such as multiprocessing, multithreading, asyncio, and c extension support offers the ability to sent and handle requests in parallel, speed up the process by many factors to get faster results. Another reason to choose python over R for this part of the project is due to the nature of web scraping. R is primarily used in the realm of data processing and analysis, and personally I feel that web scraping is more in the realm of computer science, and python offers a lot of flexibility and community support in this aspect.The python code is included in a separate python file due to the fact that there is still a problem trying to figure out how reticulate handle external python packages I also included an executable in the directory for anyone wanting to run the code without having to worry about any of the dependencies. The code will take some time to run and it will generate a csv file for each of the states and store it in the current directory.
+
+
+## Preprocessing {.tabset .tabset-fade .tabset-pills}
+
+The CSV files from each state are merged into a data frame and loaded into R. The columns are all loaded in as character type and the empty values are replaced with NA. The columns are in the right format however some of the columns can still be further cleaned, one example is the price column containing both price in dollars and price in cents. The first column of the data frame is the unique reference id on Gasbuddy for each of the gas station recorded. However, the data was scraped with more than just the id value, the column containing the entire reference link to the gas station on the website. To only extract the id values from the character string, we used a regular expression with *str_extract* function. The city_state column containing the city and state information for the gas station within the same column, the separate function is used to split it into two separate columns for further processing. The data frames now contain two columns with state information, the initial state column is the state requested, and the column generated from the separate function is the location returned from the scraping process. In the perfect scenario, both of these columns would have matching information. The price column containing prices in different units of measurement, after doing some filtering the lowest gas price determines to be 98cents, we simply converted all the amounts that are higher than 50 to dollar value in order to standardize the unit.
+
+### Merging Data from all States
+
+
+```{r, warning=F}
+multmerge = function(mypath){
+  filenames=list.files(path=mypath, full.names=TRUE)
+  datalist = (lapply(filenames, function(x){read.csv(file=x, colClasses=c("zip_code"="character"), na.strings=c(""))}))
+  res <- Reduce(function(x,y){bind_rows(x, y)}, datalist)
+  return(res)
+  
+}
+
+
+```
+```{r, warning=F}
+all_gas_data <- multmerge("./gas_data")
+head(all_gas_data)
+```
+
+### Filtering out NA prices
+
+
+```{r}
+data_with_price <- all_gas_data %>% 
+  filter(!is.na(price))
+
+head(data_with_price)
+
+```
+
+### Data Cleaning
+
+```{r, warning=F}
+
+clean_data  <- data_with_price %>% 
+  mutate(id_value=str_extract(id_value, pattern = "\\d+")) %>% 
+   mutate(price=as.numeric(str_extract(price, pattern = "[+-]?([0-9]*[.])?[0-9]+"))) %>% 
+  separate(city_state, c("city", "state_location"), sep = ",")
+
+price_col <- clean_data$price
+price_col[which(price_col>30)] <- price_col[price_col > 30] / 100
+
+
+clean_data_new <- clean_data %>% 
+  mutate(price = price_col)
+
+
+head(clean_data_new)
+
+
+```
+
+## Data Analysis and visualization {.tabset .tabset-fade .tabset-pills}
+
+This section discusses the analysis techniques for the dataset as well as some visualizations showing some of the data behaviors. A new column is created to convert the state abbreviations to full state names, the dataset is then grouped by state name and fed into ggplot’s *geom_map* function to plot the average gas prices within the state. This visualization uses the template from this GitHub repository *https://github.com/wmurphyrd/fiftystater  * with slight modifications to show average gas price information. The second type of visualization is created using *geom_botplot* function showing more detailed information on the pricing information comparing between the different states. For better visualization purposes, *fct_reorder* is used to sort the states by their mean price values.
+
+
+
+### Gas Station Frequency
+
+
+```{r}
+#most popular gas station for gasbuddy users
+ clean_data %>% 
+   group_by(name) %>% 
+   count(sort = T) %>% 
+  head(20) %>% 
+  ggplot(aes(x = fct_reorder(name, n, .desc = T), y=n)) +
+  geom_bar(stat = "identity") +
+  labs(x="Gas Station Brand", y="Count") + 
+   theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+
+### Average Price By state
+
+```{r}
+
+#average gas prices from diffrerent states
+
+
+
+data("fifty_states")
+
+state_name_data <- clean_data_new %>% 
+  mutate(full_state=tolower(setNames(state.name, state.abb)[state])) %>% 
+  group_by(full_state) %>% 
+  summarise(price=mean(price))
+
+#state_name_data
+
+
+p <- ggplot(state_name_data, aes(map_id = full_state)) + 
+  # map points to the fifty_states shape data
+  geom_map(aes(fill = price), map = fifty_states) + 
+  expand_limits(x = fifty_states$long, y = fifty_states$lat) +
+  coord_map() +
+  scale_x_continuous(breaks = NULL) + 
+  scale_y_continuous(breaks = NULL) +
+  labs(x = "", y = "") +
+  scale_fill_continuous(high = "#132B43", low = "#56B1F7")
+p
+
+```
+
+
+### Gas Price Boxplot
+
+
+```{r}
+
+clean_data_new %>%
+  ggplot() + geom_boxplot(aes(x=fct_reorder(as.factor(state), price, mean), y=price), alpha=0.5, outlier.shape = NA) +
+  labs(x="States", y="Price ($)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0, vjust = 0.5))
+
+```
+
+## Future Work
+
+The dataset can be further cleaned in the future. One example is the last_update_time column, this column contains the duration from when the price was updated last. This information is relative to when the data is scraped, the scraping code should be modified to recording the exact time rather than the relative duration. This process can be very difficult as the units are different and require natural language processing skills. More scraping can be done based on the unique id values for each gas station, information such as gas station rating, different level gas prices as well as user comments can be very useful in different scenarios. User comments and price changes can be used in hurricane scenarios to help people determine what is the best station to go to in order to get gas. 
+
+
+# Final Project
+
+## Time Series Gas prices
+
+Gas prices are adjusted at a rapid pace, these changes are driven mostly by the supply and demand of the market. There are three primary factors that can affect gas price in either direction, amount of gas production, level of gas in storage, the volume of gas export and import as the supply factors, variation of weather, level of economic growth, availability and prices of competing fuels as the demand factors. The supply and demand factors are heavily impacted by natural disasters such as hurricanes, or pandemics like the coronavirus. For example, in 2017 hurricane Irma significantly disrupted gasoline markets in Florida, first by prompting increased demand and then by disrupting the supply chain needed to deliver the fuel. The evacuation of people in anticipation of this natural disaster has caused the fuel price to skyrocket even before the arrival of the hurricane. Currently, in 2020, the coronavirus pandemic is having a totally opposite effect on gas prices. The fear of catching and spreading the virus has greatly reduced the mobility of the population leading to low demand in gas. 
+
+Gas data are collected from GasBuddy over the period of 3 weeks starting around March 25th until April 17th. We ran the crawler only once per day to avoid overloading the server and being flagged as bots. The update of gas price is completely dependent on the users of GasBuddy, the best we can do is scrape for data daily and hoping to be able to piece together the data at the end. Luckily GasBuddy has a really active user base even during the time of the pandemic. We are able to get daily gas price data for most of the gas stations over a period of 3 weeks, in this project we will only focus on the gas stations we have data for.
+
+
+## Data Reading
+
+The data are stored in different directories using the scraping date as the name. We use this function to merge all the directories together along with all the csv files inside of each directory to form a large dataframe.
+
+```{r, warning=F}
+
+data_path <- "./all_gas_data"
+
+
+
+
+merge_dirs <- function(path){
+  dirs <- list.dirs(data_path,full.names = TRUE, recursive = F)
+  
+  datalist = lapply(dirs, multmerge)
+  res <- Reduce(function(x,y){bind_rows(x, y)}, datalist)
+  return(res)
+  
+  
+}
+
+all_gas_data <- merge_dirs(data_path)
+head(all_gas_data)
+
+```
+
+## Data Processing
+
+We clean the data using similar steps to what we have discussed previously with few changes. We modified the method used to standardize the price unit, using substring function to locate the "$" symbol to determine if the price is in dollars or in cents. The update time for the gas price is no longer in the form of durations, rather the absolute time is used and was recorded during scraping. The corona virus data is oragnized county and the gas data organized by zipcode, to be able to merge these two data frames we have to create another column which maps the zipcode to the county it belongs to. This seems like a simple task, however, I had a tough time finding resources online on how to achieve this. My initial approach is to use a combintation of zipcode package and the counties dataframe, I planned to map the zipcode to the counties using their given longitude and latitude values. However, during the installation of zipcode package I got stuck. According to this [link](https://cran.r-project.org/web/packages/zipcode/index.html "sadface")  which states that zipcode package is no longer part of CRAN repo and I can no longer install it. Then I proceed to find an alternative to zipcode package which led me to the noncensus. After reading the documentation for this package, I've determined this is the right package to replace zipcode, and once again I got stuck. [NONSENSES???](https://cran.r-project.org/web/packages/noncensus/index.html "sadface2") Fortunately there is a package in python called uszipcode and is NOT removed, and this package contains a function called by_zipcode which takes in a US zipcode value and returns the county that it belongs to. I wrote a vectorized function so that it can be used with the pipe operator. Unfortunately the downside of using this approach is the speed, due to the size of the dataframe and time it need to query the zipcode, the time need to process the entire dataframe unbareable. So for this project I only used the counties that are in florida to reduce the processing time.
+
+
+
+```{r, warning=F}
+
+
+#is there a way to optmize this?
+#conda_install("r-reticulate", "uszipcode")
+
+#why is zipcode library no longer part of CRAN???
+zip <- import("uszipcode")
+zipcode_search <- zip$SearchEngine(simple_zipcode=T)
+#zipcode_search$by_zipcode("32835")$county
+
+
+get_county_from_zip <- function(x){
+  result <- unlist(lapply(x, function(zip){zipcode_search$by_zipcode(zip)$county}))
+  return(result)
+}
+
+
+
+
+data_cleaner <- function(x){ #this takes wayyy too long using python 
+  res <- x %>% 
+    filter(!is.na(price)) %>% 
+    mutate(unit = case_when(substring(price, 1, 1)=="$"~"dollar", TRUE~"cents"), id_value=str_extract(id_value, pattern = "\\d+"), price=as.numeric(str_extract(price, pattern = "[+-]?([0-9]*[.])?[0-9]+")), ) %>% 
+  separate(city_state, c("city", "state_location"), sep = ",") %>% 
+    mutate(price=case_when(unit=="cents"~price/100, TRUE~price)) %>% 
+    separate(last_update_time, c("date", "time"), sep=" ") %>% 
+    mutate(date=ymd(date), county=get_county_from_zip(zip_code)) 
+    
+  
+  return(res)
+  
+}
+
+
+data_with_county <- all_gas_data %>% 
+  filter(state=="FL") %>% 
+  data_cleaner()
+  
+
+head(data_with_county)
+
+
+```
+
+
+
+This step prepares dataframes for visulizations purposes. Average_county_price dataframe contains a price_change column with the difference in gas price from the previous day. data_count dataframe takes the 10 counties in florida that we have most data for over the period of 3 weeks. We join these two dataframes to generate a new dataframe with data for only 10 counties for visulizations
+
+```{r, warning=F}
+
+average_county_price <- data_with_county %>% 
+  group_by(id_value, date) %>% 
+  summarise(average_price_daily=mean(price), county=head(unique(county), 1)) %>% 
+  group_by(county, date) %>% 
+  summarise(price = mean(average_price_daily)) %>% 
+  mutate(lag_price=lag(price), price_change=price-lag_price)
+
+
+  
+data_count <- average_county_price %>% 
+  group_by(county) %>% 
+  count(sort = T) %>% 
+  head(10)
+
+
+
+
+top_10 <- left_join(data_count, average_county_price, by="county")
+
+head(top_10)
+
+
+```
+## Gas price Visulization {.tabset .tabset-fade .tabset-pills}
+
+### Price Trend
+
+Plotting the price over time for the 10 counties with the most data in florida. All of the counties experience a downward trend in average gas price.
+
+```{r, warning=F}
+
+top_10 %>% 
+  ggplot(aes(x=date, y=price, color=county)) +
+  geom_point() +
+  geom_smooth(se = F) +
+  scale_x_date(date_breaks="1 day") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+### Price Change over time
+
+We also plot the change in price every day from the previous day, mutiple spikes happen throughout the period.
+
+```{r, warning=F}
+
+
+top_10 %>% 
+  ggplot(aes(x= date, y=price_change, color=county)) +
+  geom_line() +
+  scale_x_date(date_breaks="1 day") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+
+```
+
+
+
+
+## Coronavirus Cases Daily
+
+This section analyzes the behavior of the coronavirus. Data are taken from New York times from this [link](https://data.world/liz-friedman/us-covid-19-data-from-nytimes "nytimes data us_counties"). The format of this data comes in the form of csv file and well organized.
+
+
+```{r, warning=F}
+df <- read.csv("https://query.data.world/s/xhb3ss5oasu2ashiy2hdujwmtyhrzd", header=TRUE, stringsAsFactors=FALSE)
+
+head(df)
+
+
+```
+
+## Data Cleaning and Processing
+
+The data frame is modified to match the data format of our gas data frame. We filter the data to be in the same time interval and focus on counties that are only in Florida for this project. The cases column shows the total number of cases up to date, we want to see a number of new cases on a daily bases as well as the change in case number from the previous day.
+
+
+
+```{r, warning=F}
+covid_data<- df %>% 
+  filter(state=="Florida") %>%
+  mutate(date=ymd(date), county=paste0(county, " County")) %>% 
+  filter(date>=ymd("2020-03-26")) %>% 
+  right_join(data_count, by="county") %>% 
+  group_by(county, date) %>% 
+  summarise(cases=cases) %>% 
+  mutate(lag_case=lag(cases), new_cases=cases-lag_case, case_change_lag= lag(new_cases), case_change=new_cases-case_change_lag)
+
+head(covid_data)
+
+```
+
+## Coronavirus Visualization {.tabset .tabset-fade .tabset-pills}
+
+### New Cases Trend
+
+
+```{r, warning=F}
+  
+covid_data %>% 
+  ggplot(aes(x=date, y=new_cases, color=county)) +
+  geom_point() +
+  geom_smooth(se=F) +
+  scale_x_date(date_breaks="1 day") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+```
+
+### Change In Cases
+
+Miami-Dade county new cases fluctuate a lot on a daily bases, also seems like that Palm Beach County often shares a similar behavior to Miami-Dade County
+
+```{r, warning=F}
+
+
+covid_data %>% 
+  ggplot(aes(x=date, y=case_change, color=county)) +
+  geom_line() +
+  scale_x_date(date_breaks="1 day") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+
+```
+
+## Map Visualizations
+
+We arbitrarily select a day that is close to the current day and map the total number of corona cases by county for all the counties in the united states. We used the counties data frame to get the locations of each county and joined it with the coronavirus data frame by the county fips code. After plotting the data, the map seemed a little off, many of the counties and states are shown as blanks, states such as California which are well known for many coronavirus cases have no data associated with it. The map shows a poor visualization and it is very difficult to distinguish the difference between counties except for a few counties with a very large number of coronavirus cases.
+
+
+```{r, warning=F}
+
+
+todays_date = today() - 4
+
+corona_lag <- df %>% 
+  mutate(county_fips=as.character(fips), date=as.Date(date)) %>% 
+  group_by(state, county, date) %>% 
+  summarise(county_fips=county_fips, cases=cases) %>% 
+  mutate(case_lag=lag(cases), new_case=cases-case_lag) %>% 
+  filter(date==todays_date)
+  
+
+
+
+corona_all <- left_join(counties, corona_lag, by="county_fips")
+
+corona_all
+
+
+corona_all %>%  #why is it like this, no data for california??
+  ggplot(aes(long, lat, group=group, fill=cases)) + 
+  geom_polygon() 
+
+
+
+```
+
+To further understand the problem, I filtered California from both the coronavirus and the counties dataframe before joining them. Then I discovered that the inconsistency in county fips code caused these two dataframes to be joined incorrectly.
+
+
+```{r}
+
+corona_lag %>% 
+  filter(state=="California") %>% 
+  head()
+counties %>% 
+  filter(state_abbv=="CA") %>% 
+  head()
+
+
+```
+I proceed to fix the county_fips in the coronavirus data frame to be consistent with the counties data frame before joining these two. This time instead of plotting the number of cases, I apply the log function to the number of cases to better show the variation between counties. Now the map looks much better in comparison. The result is very similar to the visualization provided by John Hopkins. [Link](https://coronavirus.jhu.edu/us-map) The missing counties are more likely due to major landforms such as the Rocky Mountains.
+
+```{r}
+
+#formatC(1001, width = 5, flag="0", format="fg")
+
+corona_lag_new <- df %>% 
+  mutate(county_fips=formatC(fips, width = 5, flag="0", format = "fg"), date=as.Date(date)) %>% 
+  group_by(state, county, date) %>% 
+  summarise(county_fips=county_fips, cases=cases) %>% 
+  mutate(case_lag=lag(cases), new_case=cases-case_lag) %>% 
+  filter(date==todays_date)
+
+head(corona_lag_new)
+
+
+corona_all_new <- left_join(counties, corona_lag_new, by="county_fips") %>% 
+  mutate(cases=case_when(is.na(cases)~as.integer(0), TRUE~cases))
+
+corona_all_new %>%
+  ggplot(aes(long, lat, group=group, fill=log(cases))) + 
+  borders("county") +
+  geom_polygon() +
+  scale_fill_continuous(high = "#132B43", low = "#56B1F7") +
+  theme_map() +
+  annotate("text", x = -120, y=50, label = todays_date)
+
+
+
+
+  
+  
+```
+
+## Coronavirus Animations {.tabset .tabset-fade .tabset-pills}
+
+I created two different Animations showing the changes in coronavirus cases in different parts of the united states starting from January 2020.
+
+### Animation 1
+
+```{r, warning=F}
+#animation time, corona virus cases by day
+
+corona_animate <- df %>% 
+  mutate(county_fips=formatC(fips, width = 5, flag="0", format = "fg"), date=as.Date(date)) %>% 
+  group_by(state, county, date) %>% 
+  summarise(county_fips=county_fips, cases=cases) %>% 
+  mutate(case_lag=lag(cases), new_case=cases-case_lag)
+
+
+ghost_points_fin <- tibble(
+  date = seq(min(corona_animate$date),
+                   max(corona_animate$date),
+                   by = 'days'),
+  cases = 0, lon = 0, lat = 0)
+
+
+corona_all_animate <- left_join(counties, corona_animate, by="county_fips") %>% 
+  mutate(cases=case_when(is.na(cases)~as.integer(0), TRUE~cases))
+
+
+  
+
+p <- corona_all_animate %>%
+  ggplot() +
+  borders("county")+
+  scale_fill_continuous(high = "#132B43", low = "#56B1F7")+
+  theme_map()+
+  geom_polygon(aes(long, lat, group=group, fill=log(cases))) +
+  transition_manual(date)
+
+
+
+animate(p, end_pause = 30)
+
+
+#anim_save("test.gif", ani)
+
+
+```
+
+
+### Animation 2
+
+```{r, warning=F}
+#animation for the new cases daily
+t <- corona_all_animate %>%
+  group_by(state_name, county_name, date) %>% 
+  summarise(lat=head(lat, 1), long=head(long, 1), new_case=unique(new_case), cases=unique(cases)) %>% #unique actually works with all data being the same
+  
+  #filter(!is.na(new_case), new_case>0) %>% 
+  #filter(date==todays_date) %>% 
+  ggplot() +
+  borders("state")+
+  theme_map()+
+  geom_point(aes(x=long, y=lat, size=cases, alpha=log(cases)), colour="purple") +
+  transition_manual(date)
+  
+
+
+t
+
+animate(t, end_pause = 30)
+
+#anim_save("test1.gif", ani)  
+
+
+```
+
+## Combining Gas and Coronavirus Data
+
+I combined both plots using the facet_grid function allowing for better visualization and side by side comparison of the changes in both gas price and the coronavirus cases
+
+```{r, warning=F}
+
+#covid_data
+#top_10
+
+
+merged_df <- left_join(top_10, covid_data, by=c("county", "date")) %>% 
+  select(county, date, price_change, case_change, new_cases, price)
+
+head(merged_df)
+
+merged_df %>% 
+  gather("price_change":"case_change", key="data_type", value="value") %>% 
+  ggplot(aes(x=date, y=value, color=county)) +
+  geom_line(size=0.5) +
+  facet_grid(rows=vars(data_type), scales = "free") +
+  scale_x_date(date_breaks="1 day") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  
+```
+
+I want to generate some graph showing the coorelation between daily gas prices vs the new coronavirus cases. However this graph doesn't take time into consideration.
+
+```{r, warning=F}
+
+merged_df %>% 
+   ggplot(aes(x=price, y=new_cases, color=county)) + 
+  geom_point() +
+  geom_smooth(se=F, method="lm", fullrange=TRUE)
+  
+
+
+```
+
+In order to take time into consideration, I created a function that generates different levels of lags based on a specific column of a dataframe. In this case, we created different lags on the new coronavirus cases, and hopefully, be able to see the effect of different lags on the correlation between price and new cases (eg. how 100 new cases 3 days ago affect the price today).
+
+```{r, warning=F}
+generate_lag_frame <- function(x, column_name, lagg=10){
+  for(i in 1:lagg){
+    x <- x %>% 
+      mutate(!!paste0("lag_", i) := as.numeric(lag(eval(parse(text = column_name)),n = i, default = "0")))
+  }
+  
+  return(x)
+
+}
+
+merged_df %>% 
+  generate_lag_frame("new_cases") %>% 
+  select(-c("lag_2", "lag_4", "lag_6", "lag_8")) %>% 
+  gather("lag_1":"lag_7", key="lag_number", value="value") %>% 
+  ggplot(aes(x=price, y=value, color=county)) +
+  geom_point() +
+  geom_smooth(se=F, method="lm")+
+  facet_wrap(vars(lag_number)) 
+
+
+
+
+  
+
+
+```
+
+
+Due to the time factor and my limited knowledge on time series data, I was not able to accomplish everything I wanted to do with this dataset. There are alot more that can be explored, and I feel like that gas price data can be very useful when used well and is often overlooked by people.
+
+

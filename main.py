@@ -10,6 +10,7 @@ import datetime
 import logging
 
 current_date = datetime.datetime.today().strftime("%d_%m_%Y")
+today_day = datetime.datetime.today().day
 os.mkdir(os.path.join(os.getcwd(), f"{current_date}"))
 
 logging.basicConfig(filename='test.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
@@ -91,10 +92,13 @@ def convert_to_sec(time_str):
 		raise IndexError
 
 
+if today_day %2 == 0:
+	state_list = states
+else:
+	state_list = states[::-1]
 
 
-
-for state in states:
+for state in state_list:
 
 	df_list = []
 
@@ -106,9 +110,10 @@ for state in states:
 		while True:
 
 			try:
-				test = requests.get("https://www.gasbuddy.com/home?search=%d&fuel=1" % (int(zip_value.zipcode)), headers=headers)
+				test = requests.get("https://www.gasbuddy.com/home?search=%d&fuel=1" % (int(zip_value.zipcode)), headers=headers, timeout=1)
 				break
 			except Exception as e:
+				print(f"Failed to get url request for {state} {zip_value}")
 				continue
 
 		soup = BeautifulSoup(test.content, 'html.parser')
@@ -150,7 +155,7 @@ for state in states:
 
 
 
-		#time.sleep(1) #please dont arrest me! i tried!!!
+		time.sleep(1) #please dont arrest me! i tried!!!
 
 
 	pd.DataFrame(df_list, columns=["id_value", "name", "address", "city_state", "state", "zip_code", "price", "last_update_time", "updated_by"]).to_csv(f"{current_date}/{state}_gas.csv", index=False)
